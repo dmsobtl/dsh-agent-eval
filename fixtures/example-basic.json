@@ -1,0 +1,30 @@
+[
+  {
+    "id": "hello-world",
+    "name": "Create hello world script",
+    "prompt": "Create a file hello.js that prints 'Hello, World!' to stdout",
+    "expectedOutcome": { "type": "file_contains", "path": "hello.js", "content": "Hello, World!" },
+    "tags": ["basic", "file-creation"]
+  },
+  {
+    "id": "fix-bug",
+    "name": "Fix the add function bug",
+    "prompt": "The file add.js has a bug: it subtracts instead of adding. Fix it.",
+    "expectedOutcome": { "type": "command_succeeds", "command": "node -e \"const {add} = require('./add.js'); if(add(2,3)!==5) throw 'FAIL'\"" },
+    "tags": ["basic", "bug-fix"]
+  },
+  {
+    "id": "search-and-report",
+    "name": "Find TODO comments",
+    "prompt": "Search all .js files for TODO comments and list them",
+    "expectedOutcome": { "type": "output_contains", "substring": "TODO" },
+    "tags": ["basic", "search"]
+  },
+  {
+    "id": "test-runner",
+    "name": "Run tests and report",
+    "prompt": "Run 'npm test' and tell me if all tests pass",
+    "expectedOutcome": { "type": "output_matches", "pattern": "pass|passed|✓|PASS" },
+    "tags": ["intermediate", "testing"]
+  }
+]

@@ -1,0 +1,13 @@
+{
+  "name": "dsh-agent-eval",
+  "version": "0.1.0",
+  "description": "DSH plugin: evaluate agent performance on defined tasks — run benchmarks, score outcomes, track improvement over prompt/model changes.",
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": { "test": "vitest run", "build": "tsc" },
+  "peerDependencies": { "@deepseek-ai/cordis": ">=1.0.0" },
+  "devDependencies": { "@deepseek-ai/cordis": "latest", "typescript": "^5.5.0", "vitest": "^3.0.0" },
+  "keywords": ["dsh-plugin", "deepseek-harness", "eval", "benchmark", "agent-evaluation", "scoring"],
+  "license": "MIT"
+}
