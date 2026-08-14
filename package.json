@@ -3,11 +3,34 @@
   "version": "0.1.0",
   "description": "DSH plugin: evaluate agent performance on defined tasks — run benchmarks, score outcomes, track improvement over prompt/model changes.",
   "type": "module",
-  "main": "src/index.ts",
-  "exports": { ".": "./src/index.ts" },
-  "scripts": { "test": "vitest run", "build": "tsc" },
-  "peerDependencies": { "@deepseek-ai/cordis": ">=1.0.0" },
-  "devDependencies": { "@deepseek-ai/cordis": "latest", "typescript": "^5.5.0", "vitest": "^3.0.0" },
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    }
+  },
+  "files": ["lib", "fixtures"],
+  "scripts": {
+    "test": "vitest run",
+    "build": "tsc",
+    "prepublishOnly": "tsc"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-tools": "^0.1.0-rc.6"
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "^3.18.1"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-tools": "^0.1.0-rc.6",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.5.0",
+    "vitest": "^3.0.0"
+  },
   "keywords": ["dsh-plugin", "deepseek-harness", "eval", "benchmark", "agent-evaluation", "scoring"],
   "license": "MIT"
 }

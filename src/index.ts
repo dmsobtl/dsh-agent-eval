@@ -9,67 +9,67 @@
  * - eval_compare: Compare two eval runs to detect regressions
  */
 
+import { defineTool } from '@deepseek-ai/dsh-tools'
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import { resolve, join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
-import type { EvalTask, EvalSuiteResult } from './types.ts'
-import { runEvalTask } from './runner.ts'
+import z from '@deepseek-ai/schemastery'
+import type { EvalTask, EvalSuiteResult } from './types.js'
+import { runEvalTask } from './runner.js'
+import { compareEvalRuns } from './compare.js'
+import type { ResolvedConfig } from './config.js'
 
-export type { EvalTask, EvalResult, EvalSuiteResult, ExpectedOutcome } from './types.ts'
-export { runEvalTask } from './runner.ts'
+export type { EvalTask, EvalResult, EvalSuiteResult, ExpectedOutcome } from './types.js'
+export { runEvalTask, checkOutcome } from './runner.js'
+export { compareEvalRuns } from './compare.js'
 
 export const name = 'agent-eval'
 export const inject = ['tools']
 
-export interface Config {
-  fixturesDir?: string
-  resultsDir?: string
-  defaultTimeout?: number
+export const Config = z.object({
+  fixturesDir: z.string().default('./eval/tasks'),
+  resultsDir: z.string().default('./eval/results'),
+  defaultTimeout: z.number().default(120000),
+})
+
+export function apply(ctx: Context, config: ResolvedConfig) {
+  ctx.tools.register(evalRunTool(config))
+  ctx.tools.register(evalCompareTool())
 }
 
-export function apply(ctx: Context, config: Config) {
-  const fixturesDir = config.fixturesDir ?? './eval/tasks'
-  const resultsDir = config.resultsDir ?? './eval/results'
-  const defaultTimeout = config.defaultTimeout ?? 120000
-
-  ctx.tools.register({
+function evalRunTool(config: ResolvedConfig) {
+  return defineTool({
     name: 'eval_run',
     description: 'Run an eval suite: execute each task in headless mode, check outcomes, and output a scored report. Tasks are defined in JSON files under the fixtures directory.',
     parameters: {
-      type: 'object' as const,
-      properties: {
-        suite: { type: 'string' as const, description: 'Suite name (matches a JSON file in fixturesDir, e.g. "basic" loads basic.json)' },
-        tags: { type: 'array' as const, items: { type: 'string' as const }, description: 'Only run tasks with these tags' },
-        model: { type: 'string' as const, description: 'Model name to record in results (for comparison)' },
-      },
-      required: ['suite'] as const,
+      suite: { type: 'string', required: true, description: 'Suite name (matches a JSON file in fixturesDir, e.g. "basic" loads basic.json)' },
+      tags: { type: 'array', items: { type: 'string' }, description: 'Only run tasks with these tags' },
+      model: { type: 'string', description: 'Model name to record in results (for comparison)' },
     },
-    async execute(args: { suite: string; tags?: string[]; model?: string }) {
-      const suitePath = resolve(process.cwd(), fixturesDir, `${args.suite}.json`)
+    output: {
+      schema: { type: 'json' },
+      render: (_args, value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }],
+    },
+    async execute(args) {
+      const suitePath = resolve(process.cwd(), config.fixturesDir, `${args.suite}.json`)
       let tasks: EvalTask[]
       try {
-        const content = await readFile(suitePath, 'utf-8')
-        tasks = JSON.parse(content)
-      } catch (err: any) {
-        return [{ type: 'text' as const, text: JSON.stringify({ error: `Cannot load suite: ${err.message}` }) }]
+        tasks = JSON.parse(await readFile(suitePath, 'utf-8'))
+      } catch (err) {
+        return { error: `Cannot load suite: ${(err as Error).message}` }
       }
 
-      if (args.tags?.length) {
+      if (args.tags && args.tags.length > 0) {
         tasks = tasks.filter(t => t.tags?.some(tag => args.tags!.includes(tag)))
       }
-
-      if (tasks.length === 0) {
-        return [{ type: 'text' as const, text: JSON.stringify({ error: 'No tasks match the criteria' }) }]
-      }
+      if (tasks.length === 0) return { error: 'No tasks match the criteria' }
 
       const workspace = resolve(process.cwd(), '.eval-workspace')
       await mkdir(workspace, { recursive: true })
 
       const results = []
       for (const task of tasks) {
-        task.timeout = task.timeout ?? defaultTimeout
-        const result = await runEvalTask(task, workspace)
-        results.push(result)
+        results.push(await runEvalTask(task, workspace, config.defaultTimeout))
       }
 
       const passed = results.filter(r => r.passed).length
@@ -80,18 +80,18 @@ export function apply(ctx: Context, config: Config) {
         totalTasks: results.length,
         passed,
         failed: results.length - passed,
-        avgScore: results.reduce((s, r) => s + r.score, 0) / results.length,
-        avgDurationMs: Math.round(results.reduce((s, r) => s + r.durationMs, 0) / results.length),
+        avgScore: results.length > 0 ? results.reduce((s, r) => s + r.score, 0) / results.length : 0,
+        avgDurationMs: results.length > 0 ? Math.round(results.reduce((s, r) => s + r.durationMs, 0) / results.length) : 0,
         totalTokens: results.reduce((s, r) => s + r.tokenUsage.input + r.tokenUsage.output, 0),
         results,
       }
 
-      const outDir = resolve(process.cwd(), resultsDir)
+      const outDir = resolve(process.cwd(), config.resultsDir)
       await mkdir(outDir, { recursive: true })
       const outFile = join(outDir, `${args.suite}-${Date.now()}.json`)
       await writeFile(outFile, JSON.stringify(suite, null, 2))
 
-      return [{ type: 'text' as const, text: JSON.stringify({
+      return JSON.parse(JSON.stringify({
         summary: {
           suite: suite.suiteName,
           model: suite.model,
@@ -108,57 +108,41 @@ export function apply(ctx: Context, config: Config) {
           details: r.details,
         })),
         savedTo: outFile,
-      }, null, 2) }]
+      }))
     },
   })
+}
 
-  ctx.tools.register({
+function evalCompareTool() {
+  return defineTool({
     name: 'eval_compare',
     description: 'Compare two eval run results to detect regressions or improvements between model/prompt changes.',
     parameters: {
-      type: 'object' as const,
-      properties: {
-        baseline: { type: 'string' as const, description: 'Path to baseline result JSON' },
-        current: { type: 'string' as const, description: 'Path to current result JSON' },
-      },
-      required: ['baseline', 'current'] as const,
+      baseline: { type: 'string', required: true, description: 'Path to baseline result JSON' },
+      current: { type: 'string', required: true, description: 'Path to current result JSON' },
     },
-    async execute(args: { baseline: string; current: string }) {
-      const [baseData, currData] = await Promise.all([
-        readFile(resolve(args.baseline), 'utf-8').then(JSON.parse),
-        readFile(resolve(args.current), 'utf-8').then(JSON.parse),
+    output: {
+      schema: { type: 'json' },
+      render: (_args, value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }],
+    },
+    async execute(args) {
+      const [base, curr] = await Promise.all([
+        readFile(resolve(args.baseline), 'utf-8').then(JSON.parse) as Promise<EvalSuiteResult>,
+        readFile(resolve(args.current), 'utf-8').then(JSON.parse) as Promise<EvalSuiteResult>,
       ])
 
-      const base = baseData as EvalSuiteResult
-      const curr = currData as EvalSuiteResult
-
-      const regressions: string[] = []
-      const improvements: string[] = []
-
-      for (const currResult of curr.results) {
-        const baseResult = base.results.find(r => r.taskId === currResult.taskId)
-        if (!baseResult) continue
-        if (baseResult.passed && !currResult.passed) {
-          regressions.push(`${currResult.taskName}: was PASS, now FAIL — ${currResult.details}`)
-        } else if (!baseResult.passed && currResult.passed) {
-          improvements.push(`${currResult.taskName}: was FAIL, now PASS`)
-        }
-      }
-
-      const scoreDelta = curr.avgScore - base.avgScore
-      const verdict = regressions.length > 0 ? 'regressed' : improvements.length > 0 ? 'improved' : 'unchanged'
-
-      return [{ type: 'text' as const, text: JSON.stringify({
-        verdict,
+      const comparison = compareEvalRuns(base, curr)
+      return JSON.parse(JSON.stringify({
+        verdict: comparison.verdict,
         baselineModel: base.model,
         currentModel: curr.model,
-        scoreDelta: `${scoreDelta > 0 ? '+' : ''}${Math.round(scoreDelta * 100)}%`,
+        scoreDelta: `${comparison.scoreDelta > 0 ? '+' : ''}${Math.round(comparison.scoreDelta * 100)}%`,
         baselineScore: `${Math.round(base.avgScore * 100)}%`,
         currentScore: `${Math.round(curr.avgScore * 100)}%`,
-        regressions,
-        improvements,
-        tokenDelta: curr.totalTokens - base.totalTokens,
-      }, null, 2) }]
+        regressions: comparison.regressions,
+        improvements: comparison.improvements,
+        tokenDelta: comparison.tokenDelta,
+      }))
     },
   })
 }

@@ -1,20 +1,23 @@
 /**
- * Eval task runner. Executes tasks via dsh headless mode and scores outcomes.
+ * Eval task runner. Executes each task via `dsh --profile headless` and scores
+ * the outcome.
+ *
+ * Note: `dsh --profile headless "task"` writes the last non-empty assistant
+ * TEXT to stdout and returns 0 on a completed turn. There is no JSON output
+ * channel, so per-task turn/tool/token metadata is not available here and is
+ * reported as 0; the score comes from the outcome checker over stdout + the
+ * workspace filesystem.
  */
 
 import { execSync } from 'node:child_process'
 import { readFile, access } from 'node:fs/promises'
 import { resolve } from 'node:path'
-import type { EvalTask, EvalResult, ExpectedOutcome } from './types.ts'
+import type { EvalTask, EvalResult, ExpectedOutcome } from './types.js'
 
-export async function runEvalTask(task: EvalTask, workspace: string): Promise<EvalResult> {
+export async function runEvalTask(task: EvalTask, workspace: string, defaultTimeout: number): Promise<EvalResult> {
   const startTime = Date.now()
   let output = ''
-  let turnCount = 0
-  let toolCallCount = 0
   let errorCount = 0
-  let tokenInput = 0
-  let tokenOutput = 0
 
   try {
     output = execSync(
@@ -22,24 +25,14 @@ export async function runEvalTask(task: EvalTask, workspace: string): Promise<Ev
       {
         cwd: workspace,
         encoding: 'utf-8',
-        timeout: task.timeout ?? 120000,
-        env: { ...process.env, DSH_HEADLESS_JSON: '1' },
-      }
-    )
-
-    try {
-      const meta = JSON.parse(output)
-      turnCount = meta.turnCount ?? 0
-      toolCallCount = meta.toolCallCount ?? 0
-      errorCount = meta.errorCount ?? 0
-      tokenInput = meta.tokenUsage?.input ?? 0
-      tokenOutput = meta.tokenUsage?.output ?? 0
-      output = meta.response ?? output
-    } catch {
-      // plain text output, use as-is
-    }
-  } catch (err: any) {
-    output = err.stdout ?? err.message ?? 'execution failed'
+        timeout: task.timeout ?? defaultTimeout,
+        maxBuffer: 10 * 1024 * 1024,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    ).trim()
+  } catch (err) {
+    const e = err as { stdout?: string; stderr?: string; message?: string }
+    output = e.stdout?.trim() || e.stderr?.trim() || e.message || 'execution failed'
     errorCount = 1
   }
 
@@ -52,15 +45,15 @@ export async function runEvalTask(task: EvalTask, workspace: string): Promise<Ev
     passed,
     score,
     durationMs,
-    tokenUsage: { input: tokenInput, output: tokenOutput },
-    turnCount,
-    toolCallCount,
+    tokenUsage: { input: 0, output: 0 },
+    turnCount: 0,
+    toolCallCount: 0,
     errorCount,
     details,
   }
 }
 
-async function checkOutcome(expected: ExpectedOutcome, output: string, workspace: string): Promise<{ passed: boolean; score: number; details: string }> {
+export async function checkOutcome(expected: ExpectedOutcome, output: string, workspace: string): Promise<{ passed: boolean; score: number; details: string }> {
   switch (expected.type) {
     case 'file_exists': {
       const path = resolve(workspace, expected.path)
@@ -91,10 +84,11 @@ async function checkOutcome(expected: ExpectedOutcome, output: string, workspace
 
     case 'command_succeeds': {
       try {
-        execSync(expected.command, { cwd: workspace, encoding: 'utf-8', timeout: 30000 })
+        execSync(expected.command, { cwd: workspace, encoding: 'utf-8', timeout: 30000, stdio: ['ignore', 'pipe', 'pipe'] })
         return { passed: true, score: 1, details: `Command succeeded: ${expected.command}` }
-      } catch (err: any) {
-        return { passed: false, score: 0, details: `Command failed: ${expected.command}\n${err.message?.slice(0, 200)}` }
+      } catch (err) {
+        const e = err as { message?: string }
+        return { passed: false, score: 0, details: `Command failed: ${expected.command}\n${e.message?.slice(0, 200)}` }
       }
     }
 
@@ -110,7 +104,12 @@ async function checkOutcome(expected: ExpectedOutcome, output: string, workspace
     }
 
     case 'output_matches': {
-      const regex = new RegExp(expected.pattern)
+      let regex: RegExp
+      try {
+        regex = new RegExp(expected.pattern)
+      } catch {
+        return { passed: false, score: 0, details: `Invalid regex pattern: ${expected.pattern}` }
+      }
       const matches = regex.test(output)
       return {
         passed: matches,

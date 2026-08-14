@@ -98,12 +98,13 @@ eval/
 ## 配置
 
 ```yaml
-- id: agent-eval
-  plugin: dsh-agent-eval
-  config:
-    fixturesDir: ./eval/tasks
-    resultsDir: ./eval/results
-    defaultTimeout: 120000    # 每个任务最长 2 分钟
+- insert:
+    - id: agent-eval
+      name: dsh-agent-eval
+      config:
+        fixturesDir: ./eval/tasks
+        resultsDir: ./eval/results
+        defaultTimeout: 120000    # 每个任务最长 2 分钟
 ```
 
 ## 典型用途
