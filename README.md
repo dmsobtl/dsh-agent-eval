@@ -1,5 +1,7 @@
 # dsh-agent-eval
 
+> 兼容 dsh 0.2.1-rc.x（@deepseek-ai/cordis ~4.0.5、@deepseek-ai/dsh-tools ~0.2.1-rc.2）。v0.1.1 起 content block 为扁平结构、工具结果为 role:'tool' 消息。
+
 DSH 插件：Agent 能力评估框架 — 定义任务、跑 benchmark、评分、跟踪改进。
 
 ## 为什么需要
